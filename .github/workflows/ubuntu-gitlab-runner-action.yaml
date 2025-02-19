@@ -1,0 +1,83 @@
+name: build-push-sign-ubuntu-gitlab-runner
+
+on:
+  schedule:
+    # Runs daily at 8 AM CST (14:00 UTC)
+    - cron: "0 14 * * *"
+  workflow_dispatch:
+
+jobs:
+  build-push-ubuntu-gitlab-runner:
+    env:
+      REGISTRY: ghcr.io
+      ORG: open-containers
+      IMAGE: ubuntu-gitlab-runner
+      TAG: "v22.04"
+      BUILD_OS: ubuntu:22.04
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      # Checkout the repository (Ensure all files are available)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Ensure full history for better reproducibility
+          lfs: true        # Ensure Large File Storage (LFS) files are included
+
+      # Verify required files exist before proceeding
+      - name: Verify required files
+        run: |
+          if [ ! -f ubuntu-gitlab-runner/Dockerfile ]; then
+            echo "Error: Dockerfile not found in ubuntu-gitlab-runner/"
+            exit 1
+          fi
+
+      # Set up QEMU for multi-architecture builds
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Set up Docker Buildx with an isolated builder instance
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+          driver-opts: network=host
+
+      # Login to GitHub Container Registry (GHCR)
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build and push multi-architecture image with security metadata
+      - name: Build and push ubuntu-gitlab-runner container image
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .  # Set root context to include all necessary files
+          file: ubuntu-gitlab-runner/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64 # Multi-architecture support
+          build-args: |
+            BUILD_OS=${{ env.BUILD_OS }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE }}:${{ env.TAG }}
+            ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE }}:latest
+          sbom: true  # Attach SBOM for supply chain security
+          provenance: mode=max  # Enables maximum build provenance metadata
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE }},push=true
+
+      # Install Cosign for signing the image
+      - name: Set up Cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Sign the container image using Cosign
+      - name: Sign container image
+        run: |
+          cosign sign ${{ env.REGISTRY }}/${{ env.ORG }}/${{ env.IMAGE }}@${{ steps.docker_build.outputs.digest }} --yes
