@@ -1,4 +1,4 @@
-FROM ubuntu:jammy # ubuntu 22.04 - docker pull ubuntu:jammy
+FROM ubuntu:jammy AS Builder # ubuntu 22.04 - docker pull ubuntu:jammy
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LD_LIBRARY_PATH=/usr/local/ssl/lib
